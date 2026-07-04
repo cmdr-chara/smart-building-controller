@@ -1,0 +1,20 @@
+{
+  "internalDoorUnlocked": false,
+  "intrusionAlarmArmed": true,
+  "rfidReaderEnabled": true,
+  "parkingBarrierOpen": false,
+  "vehicleDetected": true,
+  "parkingCapacity": 32,
+  "occupiedSpots": 21,
+  "twilightDetected": false,
+  "exteriorLightsOn": false,
+  "awningOpen": true,
+  "temperature": 27.2,
+  "humidity": 62.0,
+  "fanOn": true,
+  "windowsOpen": false,
+  "motionDetected": true,
+  "indoorLightsOn": true,
+  "lcdEnabled": true,
+  "lastUpdated": "2026-04-08T19:40:00+02:00"
+}

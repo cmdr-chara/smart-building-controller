@@ -1,0 +1,61 @@
+name: Android APK Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release APK
+        env:
+          GRADLE_OPTS: -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false
+        run: flutter build apk --release
+
+      - name: Prepare APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk smart-controller-latest.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-controller-latest.apk
+          path: smart-controller-latest.apk
+
+      - name: Replace latest GitHub Release APK
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view latest >/dev/null 2>&1 || gh release create latest --title "Latest APK" --notes "Build automatico dell'APK da main."
+          gh release upload latest smart-controller-latest.apk --clobber
