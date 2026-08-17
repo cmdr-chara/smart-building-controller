@@ -6,14 +6,21 @@ import '../domain/smart_home_state.dart';
 import 'esp32_repository.dart';
 
 class HttpEsp32Repository implements Esp32Repository {
-  HttpEsp32Repository({required this.baseUrl, required this.client});
+  HttpEsp32Repository({
+    required this.baseUrl,
+    required this.client,
+    this.apiToken = const String.fromEnvironment('SMART_CONTROLLER_API_TOKEN'),
+  });
 
   final String baseUrl;
   final http.Client client;
+  final String apiToken;
 
   Uri _uri(String fileName) {
     final normalized = _normalizedBaseUrl();
-    return Uri.parse('$normalized/api/$fileName');
+    final uri = Uri.parse('$normalized/api/$fileName');
+    _validateEndpoint(uri);
+    return uri;
   }
 
   String _normalizedBaseUrl() {
@@ -40,12 +47,39 @@ class HttpEsp32Repository implements Esp32Repository {
     return value;
   }
 
+  void _validateEndpoint(Uri uri) {
+    final loopback = uri.host == 'localhost' ||
+        uri.host == '127.0.0.1' ||
+        uri.host == '::1';
+    if (uri.scheme == 'https' || (uri.scheme == 'http' && loopback)) {
+      return;
+    }
+    throw StateError(
+      'Gli endpoint remoti devono usare HTTPS; HTTP e consentito solo su loopback.',
+    );
+  }
+
+  Map<String, String> _headers({bool json = false}) {
+    final token = apiToken.trim();
+    if (token.length < 32) {
+      throw StateError(
+        'SMART_CONTROLLER_API_TOKEN non configurato o troppo corto.',
+      );
+    }
+
+    return <String, String>{
+      'Accept': 'application/json',
+      'Authorization': 'Bearer $token',
+      if (json) 'Content-Type': 'application/json',
+    };
+  }
+
   @override
   Future<SmartHomeState> fetchState({SmartHomeState? fallback}) async {
     final uri = _uri('state.php');
     final response = await client.get(
       uri,
-      headers: const <String, String>{'Accept': 'application/json'},
+      headers: _headers(),
     );
 
     if (response.statusCode != 200) {
@@ -82,10 +116,7 @@ class HttpEsp32Repository implements Esp32Repository {
 
     final response = await client.post(
       uri,
-      headers: const <String, String>{
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: _headers(json: true),
       body: jsonEncode(body),
     );
 
