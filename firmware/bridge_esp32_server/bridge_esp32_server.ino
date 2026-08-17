@@ -3,6 +3,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "secrets.h"
 
 // ============================================================
 // CONFIGURAZIONE WIFI E SERVER
@@ -108,6 +109,7 @@ unsigned long pullOkCount = 0;
 unsigned long pullFailCount = 0;
 unsigned long pushOkCount = 0;
 unsigned long pushFailCount = 0;
+bool remoteSecurityReady = false;
 
 // ============================================================
 // FUNZIONI UTILI
@@ -117,8 +119,31 @@ void log(String tag, String msg) {
   Serial.printf("[%lu ms] [%s] %s\n", millis(), tag.c_str(), msg.c_str());
 }
 
+bool validateRemoteSecurity() {
+  if (String(API_TOKEN).length() < 32) {
+    log("SECURITY", "API_TOKEN mancante o troppo corto; rete remota disabilitata");
+    return false;
+  }
+  if (!String(SERVER_BASE_URL).startsWith("https://")) {
+    log("SECURITY", "SERVER_BASE_URL deve usare HTTPS");
+    return false;
+  }
+  String ca = TLS_ROOT_CA;
+  if (ca.length() < 100 || ca.indexOf("BEGIN CERTIFICATE") < 0) {
+    log("SECURITY", "TLS_ROOT_CA non configurata; rete remota disabilitata");
+    return false;
+  }
+  log("SECURITY", "Bearer token e verifica TLS configurati");
+  return true;
+}
+
+void addApiAuthorization(HTTPClient& http) {
+  http.addHeader("Authorization", "Bearer " + String(API_TOKEN));
+}
+
 void logStatusSummary() {
   String msg = "wifi=" + String(WiFi.status() == WL_CONNECTED ? "ok" : "down");
+  msg += " security=" + String(remoteSecurityReady ? "ok" : "blocked");
   msg += " arduino=" + String(hasArduinoData ? "ok" : (serialByteSeen ? "noise" : "waiting"));
   msg += " baud=" + String(BAUD_RATES[currentBaudIndex]);
   msg += serialBaudLocked ? " locked" : " scanning";
@@ -391,20 +416,37 @@ void sendCommandToArduino(bool buzzerRequest) {
 
 void serverPull() {
   if (WiFi.status() != WL_CONNECTED) return;
+  if (!remoteSecurityReady) {
+    pullFailCount++;
+    return;
+  }
 
   HTTPClient http;
   WiFiClientSecure client;
-  client.setInsecure();  // Per Altervista HTTPS
+  client.setCACert(TLS_ROOT_CA);
 
   http.begin(client, String(SERVER_BASE_URL) + "/api/state.php");
+  addApiAuthorization(http);
   int httpCode = http.GET();
   lastPullHttp = httpCode;
 
   if (httpCode == 200) {
     String payload = http.getString();
     DynamicJsonDocument doc(2048);
-    deserializeJson(doc, payload);
+    DeserializationError error = deserializeJson(doc, payload);
+    if (error) {
+      pullFailCount++;
+      log("HTTP", "JSON Pull non valido: " + String(error.c_str()));
+      http.end();
+      return;
+    }
     JsonObject state = doc["state"];
+    if (state.isNull()) {
+      pullFailCount++;
+      log("HTTP", "Pull senza oggetto state");
+      http.end();
+      return;
+    }
     remoteHas = DesiredFieldFlags();
 
     // Legge cosa vuole il server
@@ -495,6 +537,10 @@ void serverPush() {
     log("HTTP", "PUSH saltato: WiFi non connesso");
     return;
   }
+  if (!remoteSecurityReady) {
+    pushFailCount++;
+    return;
+  }
 
   if (!hasArduinoData) {
     if (serialByteSeen) {
@@ -511,9 +557,10 @@ void serverPush() {
 
   HTTPClient http;
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setCACert(TLS_ROOT_CA);
 
   http.begin(client, String(SERVER_BASE_URL) + "/api/device_state.php");
+  addApiAuthorization(http);
   http.addHeader("Content-Type", "application/json");
 
   DynamicJsonDocument doc(2048);
@@ -575,6 +622,7 @@ void setup() {
   }
 
   log("WIFI", "Connesso! IP: " + WiFi.localIP().toString());
+  remoteSecurityReady = validateRemoteSecurity();
   logStatusSummary();
 }
 
