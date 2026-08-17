@@ -69,6 +69,7 @@ smart-controller/
     command.php
     device_state.php
   storage/
+    .htaccess
     state.json
 ```
 
@@ -102,7 +103,10 @@ emit a cross-origin browser allowlist. Native Flutter and ESP32 clients do not
 need CORS.
 
 The API also limits JSON request bodies, uses restrictive storage permissions,
-and requires the bearer token for reads, commands and device-state writes.
+and requires the bearer token for reads, commands and device-state writes. The
+included `server/storage/.htaccess` blocks direct HTTP access to persisted state
+on Apache-compatible hosts; preserve that file when deploying the `server/`
+directory.
 
 ## Flutter App
 
