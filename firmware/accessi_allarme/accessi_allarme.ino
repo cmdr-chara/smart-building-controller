@@ -7,6 +7,7 @@
 #include <MFRC522.h>
 #include <Stepper.h>
 #include <LiquidCrystal.h>
+#include "secrets.h"
 
 // ============================================================
 // WIFI / SERVER PHP
@@ -84,6 +85,7 @@ unsigned long remoteChangeCount = 0;
 unsigned long cardReadCount = 0;
 unsigned long cardAllowCount = 0;
 unsigned long cardDenyCount = 0;
+bool remoteSecurityReady = false;
 
 // ============================================================
 // UTILITY
@@ -107,6 +109,28 @@ void logLine(const __FlashStringHelper* area, const __FlashStringHelper* level, 
   Serial.print(level);
   Serial.print(F(" | "));
   Serial.println(message);
+}
+
+bool validateRemoteSecurity() {
+  if (String(API_TOKEN).length() < 32) {
+    logLine(F("SECURITY"), F("ERR"), F("API_TOKEN mancante o troppo corto; rete remota disabilitata"));
+    return false;
+  }
+  if (!useHttps()) {
+    logLine(F("SECURITY"), F("ERR"), F("SERVER_BASE_URL deve usare HTTPS"));
+    return false;
+  }
+  String ca = TLS_ROOT_CA;
+  if (ca.length() < 100 || ca.indexOf("BEGIN CERTIFICATE") < 0) {
+    logLine(F("SECURITY"), F("ERR"), F("TLS_ROOT_CA non configurata; rete remota disabilitata"));
+    return false;
+  }
+  logLine(F("SECURITY"), F("OK"), F("Bearer token e verifica TLS configurati"));
+  return true;
+}
+
+void addApiAuthorization(HTTPClient& http) {
+  http.addHeader("Authorization", "Bearer " + String(API_TOKEN));
 }
 
 String boolText(bool value) {
@@ -349,6 +373,7 @@ void applyRemoteState(JsonObject state) {
 }
 
 bool pullRemoteStateHttp(HTTPClient& http) {
+  addApiAuthorization(http);
   int status = http.GET();
   lastPullStatus = status;
 
@@ -378,19 +403,16 @@ bool pullRemoteState() {
     pullFailCount++;
     return false;
   }
+  if (!remoteSecurityReady) {
+    pullFailCount++;
+    return false;
+  }
 
   HTTPClient http;
-  bool ok = false;
-  if (useHttps()) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    http.begin(client, buildUrl("/api/state.php"));
-    ok = pullRemoteStateHttp(http);
-  } else {
-    WiFiClient client;
-    http.begin(client, buildUrl("/api/state.php"));
-    ok = pullRemoteStateHttp(http);
-  }
+  WiFiClientSecure client;
+  client.setCACert(TLS_ROOT_CA);
+  http.begin(client, buildUrl("/api/state.php"));
+  bool ok = pullRemoteStateHttp(http);
   http.end();
   return ok;
 }
@@ -402,6 +424,7 @@ void writeStatePayload(JsonDocument& doc) {
 }
 
 bool pushDeviceStateHttp(HTTPClient& http, const String& body) {
+  addApiAuthorization(http);
   http.addHeader("Content-Type", "application/json");
   int status = http.POST(body);
   lastPushStatus = status;
@@ -422,6 +445,10 @@ bool pushDeviceState() {
     pushFailCount++;
     return false;
   }
+  if (!remoteSecurityReady) {
+    pushFailCount++;
+    return false;
+  }
 
   DynamicJsonDocument doc(512);
   writeStatePayload(doc);
@@ -430,23 +457,17 @@ bool pushDeviceState() {
   serializeJson(doc, body);
 
   HTTPClient http;
-  bool ok = false;
-  if (useHttps()) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    http.begin(client, buildUrl("/api/device_state.php"));
-    ok = pushDeviceStateHttp(http, body);
-  } else {
-    WiFiClient client;
-    http.begin(client, buildUrl("/api/device_state.php"));
-    ok = pushDeviceStateHttp(http, body);
-  }
+  WiFiClientSecure client;
+  client.setCACert(TLS_ROOT_CA);
+  http.begin(client, buildUrl("/api/device_state.php"));
+  bool ok = pushDeviceStateHttp(http, body);
   http.end();
   return ok;
 }
 
 void logStatusSummary() {
   String message = "wifi=" + String(WiFi.status() == WL_CONNECTED ? "ok" : "down") +
+                   " security=" + String(remoteSecurityReady ? "ok" : "blocked") +
                    " rssi=" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0) + "dBm" +
                    " pull=" + String(pullOkCount) + "/" + String(pullFailCount) +
                    " push=" + String(pushOkCount) + "/" + String(pushFailCount) +
@@ -481,6 +502,7 @@ void setup() {
 
   stepper.setSpeed(STEPPER_RPM);
   connectWiFi();
+  remoteSecurityReady = validateRemoteSecurity();
   showIdleScreen();
 
   unsigned long now = millis();
