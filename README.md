@@ -35,12 +35,12 @@ firmware/luci_interne/               Placeholder for a future module
 
 ## How It Works
 
-1. The app reads state from `GET /api/state.php`.
-2. The app sends commands to `POST /api/command.php`.
+1. The app reads state from authenticated `GET /api/state.php`.
+2. The app sends commands to authenticated `POST /api/command.php`.
 3. The PHP API persists the desired state in `server/storage/state.json`.
 4. The ESP32 bridge polls the API and sends `CMD;...` lines to Arduino.
 5. Arduino modules reply with `STATE;...` lines.
-6. The bridge posts live device state to `POST /api/device_state.php`.
+6. The bridge posts live device state to authenticated `POST /api/device_state.php`.
 7. The app refreshes and displays the updated state.
 
 Example serial command:
@@ -80,10 +80,29 @@ http://127.0.0.1/smart-controller
 ```
 
 Use the base URL in the app settings. Do not append `/api`, `state.php` or
-`command.php`; the app builds those endpoint URLs internally.
+`command.php`; the app builds those endpoint URLs internally. Remote endpoints
+must use HTTPS; cleartext HTTP is accepted by the Flutter client only for
+loopback development.
 
-> Note: the included PHP API is intentionally simple for a school prototype. Do
-> not expose a real installation publicly without adding authentication.
+### API security configuration
+
+The PHP API fails closed unless `SMART_CONTROLLER_API_TOKEN` is configured with
+at least 32 characters. Use the same value for the Flutter build and both ESP32
+clients. Do not commit it.
+
+Example server environment:
+
+```text
+SMART_CONTROLLER_API_TOKEN=replace-with-a-random-32-plus-character-token
+SMART_CONTROLLER_ALLOWED_ORIGIN=https://optional-browser-origin.example
+```
+
+`SMART_CONTROLLER_ALLOWED_ORIGIN` is optional. If it is unset, the API does not
+emit a cross-origin browser allowlist. Native Flutter and ESP32 clients do not
+need CORS.
+
+The API also limits JSON request bodies, uses restrictive storage permissions,
+and requires the bearer token for reads, commands and device-state writes.
 
 ## Flutter App
 
@@ -93,17 +112,21 @@ Install dependencies:
 flutter pub get
 ```
 
-Run the app:
+Run the app with the same API token configured on the server:
 
 ```powershell
-flutter run
+flutter run --dart-define=SMART_CONTROLLER_API_TOKEN=replace-with-the-same-token
 ```
 
 Build a release APK:
 
 ```powershell
-flutter build apk --release
+flutter build apk --release --dart-define=SMART_CONTROLLER_API_TOKEN=replace-with-the-same-token
 ```
+
+The token is compiled into the client and therefore should be treated as a
+prototype access control, not as a substitute for per-user authentication in a
+real building deployment.
 
 Useful checks:
 
@@ -125,13 +148,30 @@ liquid_glass_widgets
 
 ## Firmware Setup
 
-Configure Wi-Fi and server URL in the ESP32 sketches before uploading:
+Configure Wi-Fi and the HTTPS server URL in each networked ESP32 sketch before
+uploading:
 
 ```cpp
 const char* WIFI_SSID = "NOME_WIFI";
 const char* WIFI_PASSWORD = "PASSWORD_WIFI";
 const char* SERVER_BASE_URL = "https://TUO_DOMINIO.altervista.org/smart-controller";
 ```
+
+For both `firmware/bridge_esp32_server/` and `firmware/accessi_allarme/`, copy
+`secrets.h.example` to `secrets.h`, then configure:
+
+```cpp
+const char* API_TOKEN = "replace-with-the-same-32-plus-character-token";
+const char* TLS_ROOT_CA = R"EOF(
+-----BEGIN CERTIFICATE-----
+...root CA that validates SERVER_BASE_URL...
+-----END CERTIFICATE-----
+)EOF";
+```
+
+`secrets.h` is ignored by Git. The ESP32 clients fail closed when the token, HTTPS
+URL or CA certificate is missing. TLS certificate verification is enabled; do
+not replace `setCACert()` with `setInsecure()`.
 
 Bridge sketch:
 
@@ -184,13 +224,13 @@ Arduino-to-ESP32 line. Disconnect Uno pins `0/1` while uploading sketches.
 
 ## Troubleshooting
 
-If the app does not update:
+If the app or ESP32 cannot reach the API:
 
-1. Open `/api/state.php` in a browser.
-2. Check that `lastUpdated` changes.
-3. Check ESP32 serial logs for `pull`, `push` and HTTP status values.
-4. If the API state is stale, inspect ESP32 Wi-Fi, serial wiring and the Arduino
-   module that should be sending `STATE;...`.
+1. Confirm `SMART_CONTROLLER_API_TOKEN` is set on the server and the same token is used by the client.
+2. Confirm the remote URL uses HTTPS.
+3. Confirm each ESP32 `secrets.h` contains the correct root CA for the server certificate.
+4. Check ESP32 serial logs for `security=ok`, pull/push counters and HTTP status values.
+5. Check that `lastUpdated` changes after authenticated device writes.
 
 If ESP32 receives no valid Arduino state:
 
@@ -218,11 +258,12 @@ php -l server\api\command.php
 php -l server\api\device_state.php
 ```
 
-Arduino CLI examples:
+Arduino CLI examples (after creating each required `secrets.h`):
 
 ```powershell
 arduino-cli compile --fqbn arduino:avr:mega firmware\clima_ventola_finestre
 arduino-cli compile --fqbn arduino:avr:mega firmware\parcheggio_sbarra
 arduino-cli compile --fqbn arduino:avr:uno firmware\esterni_tenda
 arduino-cli compile --fqbn esp32:esp32:esp32 firmware\bridge_esp32_server
+arduino-cli compile --fqbn esp32:esp32:esp32 firmware\accessi_allarme
 ```
