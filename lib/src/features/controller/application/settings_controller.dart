@@ -40,7 +40,7 @@ class SettingsController extends Notifier<Esp32Settings> {
       return '';
     }
     if (!value.contains('://')) {
-      value = 'http://$value';
+      value = 'https://$value';
     }
     if (value.endsWith('/')) {
       value = value.substring(0, value.length - 1);
