@@ -11,6 +11,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['ok' => false, 'error' => 'Method not allowed'], 405);
 }
 
+require_api_token();
+
 $payload = read_json_payload();
 
 $allowedKeys = [
